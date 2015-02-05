@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 
 #
-#		Author: historypeats <iam.historypeats@gmail.com>
+#	Author: historypeats <iam.historypeats@gmail.com>
 #	Description: This tool can be used to audit your S3 Buckets
 #	To find out what buckets and files have publicly exposed read permissions
 #
 #	Requirements: 
-#		- boto - pip install boto
-#		- blessings - pip install blessings
+#		- boto
+#		- blessings
 #
 
 from boto.s3.connection import S3Connection, S3ResponseError
