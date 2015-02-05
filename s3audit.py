@@ -141,16 +141,15 @@ def main():
 	keys = getKeys(rbucket)
 
 	# Put keys into Queue and get length
-	'''
 	for key in keys:
 		keyQueue.put(key)
 
-	'''
 	
 	# Remove this... for DEBUG 30 keys
+	'''
 	for i in xrange(30):
 		keyQueue.put(keys[i])
-	
+	'''
 
 	# Start S3 threads
 	for t in xrange(num_threads):
