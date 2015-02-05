@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 
 #
-#	Author: historypeats <iam.historypeats@gmail.com>
+#		Author: historypeats <iam.historypeats@gmail.com>
 #	Description: This tool can be used to audit your S3 Buckets
 #	To find out what buckets and files have publicly exposed read permissions
 #
 #	Requirements: 
-#		- boto 
-#		- blessings
+#		- boto - pip install boto
+#		- blessings - pip install blessings
 #
 
 from boto.s3.connection import S3Connection, S3ResponseError
@@ -15,11 +15,87 @@ from blessings import Terminal
 from Queue import Queue
 from threading import Thread
 import sys
+import argparse
 
+
+# 
+#	Threading Classes
+#
+class WriteThread(Thread):
+	''' This class handles threading for writing the results to a file '''
+
+	def __init__(self, resultsQueue, filename='s3audit.results'):
+		''' Constructor '''
+		Thread.__init__(self)
+		self.results = resultsQueue
+		self.filename = filename
+
+
+	def writeResult(self, result):
+		with open(self.filename, 'a') as fd:
+			fd.write('{0}\n'.format(result))
+
+
+	def run(self):
+		while True:
+			self.result = self.results.get()
+			self.writeResult(self.result)
+			self.results.task_done()
+
+
+
+class S3Thread(Thread):
+	''' This class handles threading for retrieving S3 information '''
+
+	def __init__(self, keyQueue, resultsQueue):
+		''' Constructor '''
+		Thread.__init__(self)
+		self.keys = keyQueue
+		self.results = resultsQueue
+
+
+	def findPerms(self, key):
+		try:
+			t = Terminal()
+			message = ''
+			wmessage = ''
+
+			for auth in key.get_acl().acl.grants:
+				if auth.permission == 'READ':
+					message = 'public: {0}'.format(str(key.name))
+					wmessage = message
+
+		except S3ResponseError:
+			message = t.red +'error: Key does not exist: {0}'.format(str(key.name)) + t.normal
+			wmessage = 'error: Key does not exist: {0}'.format(str(key.name))
+
+		except:
+			message = t.red + 'unknown: Uknown error in find_public() with key: {0}'.format(str(key.name)) + t.normal
+			wmessage = 'unknown: Uknown error in find_public() with key: {0}'.format(str(key.name))
+
+		finally:
+			print message
+			self.results.put(wmessage)
+
+
+	def run(self):
+		while True:
+			self.key = self.keys.get()
+			self.findPerms(self.key)
+			self.keys.task_done()
+
+
+#
+#	Utility
+#
 def usage():
+	''' Print usage '''
 	print 'usage: {0} bucket_name'.format(sys.argv[0])
 
 
+#
+#	Functions
+#
 def getKeys(bucket):
 	try:
 		t = Terminal()
@@ -36,49 +112,17 @@ def getKeys(bucket):
 
 		return keys
 	except KeyboardInterrupt:
-		print t.red + '[!] ^C entered. Exiting.' + t.normal
-		sys.exit(-1)
+		sys.exit(t.red + '[!] ^C entered. Exiting.' + t.normal)
 	except:
-		
-		print t.red + '[!] Unknown error in getKeys()' + t.normal
-		sys.exit(-1)
+		sys.exit(t.red + '[!] Unknown error in getKeys()' + t.normal)
 
 
-def find_public(q, resultsQ):
-	while True:
-		try:
-			t = Terminal()
-			key = q.get()
-
-			for auth in key.get_acl().acl.grants :
-					if auth.permission == 'READ' :
-						print 'public: {0}'.format(str(key.name))
-						resultsQ.put('public: {0}'.format(str(key.name)))
-			
-			q.task_done()
-
-		except S3ResponseError:
-			print t.red + 'error: Key does not exist: {0}'.format(str(key.name)) + t.normal
-			resultsQ.put('error: Key does not exist: {0}'.format(str(key.name)))
-
-			q.task_done()
-
-		except:
-			print t.red + '[!] Unknown error in find_public() with key: {0}'.format(str(key.name)) + t.normal
-			resultsQ.put('unknown: Uknown error in find_public() with key: {0}'.format(str(key.name)))
-
-			q.task_done()
-		
-
-def writeResults(resultsQ):
-	fd = open('test.results', 'a')
-	while not resultsQ.empty():
-		fd.write(resultsQ.get() + "\n")
-		resultsQ.task_done()
-	
-	fd.close()
-
+#
+#	Main
+#
 def main():
+	''' Main '''
+
 	if len(sys.argv) < 2:
 		usage()
 		t = Terminal()
@@ -88,43 +132,45 @@ def main():
 	rbucket = sys.argv[1]
 
 	num_threads = 10
-	q = Queue(maxsize=0)
+	keyQueue = Queue(maxsize=0)
 
 	# For storing results and printing
-	resultsQ = Queue(maxsize=0)
+	resultsQueue = Queue(maxsize=0)
 
 	# Get list of keys from Bucket
 	keys = getKeys(rbucket)
 
 	# Put keys into Queue and get length
+	'''
 	for key in keys:
-		q.put(key)
-
+		keyQueue.put(key)
 
 	'''
-	for i in range(30):
-		q.put(keys[i])
-		qSize += 1
-	'''
+	
+	# Remove this... for DEBUG 30 keys
+	for i in xrange(30):
+		keyQueue.put(keys[i])
+	
 
-	# Start threads
-	for i in range(num_threads):
-		worker = Thread(target=find_public, args=(q, resultsQ, ))
+	# Start S3 threads
+	for t in xrange(num_threads):
+		worker = S3Thread(keyQueue, resultsQueue)
 		worker.setDaemon(True)
 		worker.start()
 
 	# Wait for threads to finish
-	q.join()
-	print 'Q threads finished'
+	keyQueue.join()
 
-	print 'starting write threads...'
-	t = Thread(target=writeResults, args=(resultsQ,))
-	t.setDaemon(True)
-	t.start()
+	# Start Write Thread
+	worker = WriteThread(resultsQueue)
+	worker.setDaemon(True)
+	worker.start()
 
-	resultsQ.join()
+	# Wait for threads to finish
+	resultsQueue.join()
 
-	print '[+] {0} keys found.'.format(str(keys))
+	print '[+] {0} keys found.'.format(str(len(keys)))
+
 
 if __name__ == '__main__':
 	main()
