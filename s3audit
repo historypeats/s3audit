@@ -17,6 +17,12 @@ from threading import Thread
 import sys
 import argparse
 
+#
+#	CONST
+#
+DEFAULT_THREADS = 10
+DEFAULT_OUTFILE = '{0}.results'.format(sys.argv[0])
+
 
 # 
 #	Threading Classes
@@ -24,7 +30,7 @@ import argparse
 class WriteThread(Thread):
 	''' This class handles threading for writing the results to a file '''
 
-	def __init__(self, resultsQueue, filename='s3audit.results'):
+	def __init__(self, resultsQueue, filename):
 		''' Constructor '''
 		Thread.__init__(self)
 		self.results = resultsQueue
@@ -55,6 +61,8 @@ class S3Thread(Thread):
 
 
 	def findPerms(self, key):
+		''' Finds the permissions of a key and stores the result in a result queue '''
+		
 		try:
 			t = Terminal()
 			message = ''
@@ -79,6 +87,7 @@ class S3Thread(Thread):
 
 
 	def run(self):
+		''' Thread Run '''
 		while True:
 			self.key = self.keys.get()
 			self.findPerms(self.key)
@@ -86,17 +95,11 @@ class S3Thread(Thread):
 
 
 #
-#	Utility
-#
-def usage():
-	''' Print usage '''
-	print 'usage: {0} bucket_name'.format(sys.argv[0])
-
-
-#
 #	Functions
 #
 def getKeys(bucket):
+	''' This returns a list of keys from a bucket '''
+
 	try:
 		t = Terminal()
 		keys = list()
@@ -113,9 +116,26 @@ def getKeys(bucket):
 		return keys
 	except KeyboardInterrupt:
 		sys.exit(t.red + '[!] ^C entered. Exiting.' + t.normal)
+
+	except S3ResponseError:
+		sys.exit(t.red + '[!] Bucket {0} either does not exist or you do not have permissions to access it.'.format(bucket) + t.normal)
+	
 	except:
 		sys.exit(t.red + '[!] Unknown error in getKeys()' + t.normal)
 
+	finally:
+		conn.close()
+
+
+def initArgs():
+	''' Initialize Argparse '''
+
+	parser = argparse.ArgumentParser(description='S3 Auditing Tool')
+	parser.add_argument('bucket', help='The S3 bucket to audit.', type=str)
+	parser.add_argument('-o', dest='outfile', help='The output file.', type=str, default=DEFAULT_OUTFILE)
+	parser.add_argument('-t', dest='threads', help='How many threads to use.', type=int, default=DEFAULT_THREADS)
+
+	return parser.parse_args()
 
 #
 #	Main
@@ -123,34 +143,30 @@ def getKeys(bucket):
 def main():
 	''' Main '''
 
-	if len(sys.argv) < 2:
-		usage()
-		t = Terminal()
-		print t.red + '[+] Missing bucket name' + t.normal
-		sys.exit(-1)
+	# Parse args
+	args = initArgs()	
 
-	rbucket = sys.argv[1]
-
-	num_threads = 10
+	num_threads = args.threads
+	
+	# For storing S3 Keys
 	keyQueue = Queue(maxsize=0)
 
 	# For storing results and printing
 	resultsQueue = Queue(maxsize=0)
 
-	# Get list of keys from Bucket
-	keys = getKeys(rbucket)
+	# Get list of keys from bucket
+	keys = getKeys(args.bucket)
 
 	# Put keys into Queue and get length
+	'''
 	for key in keys:
 		keyQueue.put(key)
-
+	'''
 	
 	# Remove this... for DEBUG 30 keys
-	'''
 	for i in xrange(30):
 		keyQueue.put(keys[i])
-	'''
-
+	
 	# Start S3 threads
 	for t in xrange(num_threads):
 		worker = S3Thread(keyQueue, resultsQueue)
@@ -161,7 +177,7 @@ def main():
 	keyQueue.join()
 
 	# Start Write Thread
-	worker = WriteThread(resultsQueue)
+	worker = WriteThread(resultsQueue, args.outfile)
 	worker.setDaemon(True)
 	worker.start()
 
