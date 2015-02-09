@@ -14,8 +14,12 @@ from boto.s3.connection import S3Connection, S3ResponseError
 from blessings import Terminal
 from Queue import Queue
 from threading import Thread
+from time import gmtime, strftime
+from collections import Counter
 import sys
 import argparse
+import os
+import urlparse
 
 #
 #	DEFAULT VALUES
@@ -27,29 +31,6 @@ DEFAULT_OUTFILE = '{0}.results'.format(sys.argv[0])
 # 
 #	Threading Classes
 #
-class WriteThread(Thread):
-	''' This class handles threading for writing the results to a file '''
-
-	def __init__(self, resultsQueue, filename):
-		''' Constructor '''
-		Thread.__init__(self)
-		self.results = resultsQueue
-		self.filename = filename
-
-
-	def writeResult(self, result):
-		with open(self.filename, 'a') as fd:
-			fd.write('{0}\n'.format(result))
-
-
-	def run(self):
-		while True:
-			self.result = self.results.get()
-			self.writeResult(self.result)
-			self.results.task_done()
-
-
-
 class S3Thread(Thread):
 	''' This class handles threading for retrieving S3 information '''
 
@@ -59,32 +40,22 @@ class S3Thread(Thread):
 		self.keys = keyQueue
 		self.results = resultsQueue
 
-
 	def findPerms(self, key):
 		''' Finds the permissions of a key and stores the result in a result queue '''
 		
 		try:
+			kname = str(key.name)
 			t = Terminal()
-			message = ''
-			wmessage = ''
-
 			for auth in key.get_acl().acl.grants:
 				if auth.permission == 'READ':
-					message = 'public: {0}'.format(str(key.name))
-					wmessage = message
+					#print 'public: {0}'.format(kname)
+					self.results.put(kname)
 
 		except S3ResponseError:
-			message = t.red +'error: Key does not exist: {0}'.format(str(key.name)) + t.normal
-			wmessage = 'error: Key does not exist: {0}'.format(str(key.name))
+			print t.red +'[!] Key does not exist: {0}'.format(kname) + t.normal
 
 		except:
-			message = t.red + 'unknown: Uknown error in find_public() with key: {0}'.format(str(key.name)) + t.normal
-			wmessage = 'unknown: Uknown error in find_public() with key: {0}'.format(str(key.name))
-
-		finally:
-			print message
-			self.results.put(wmessage)
-
+			print t.red + '[!] Uknown error in find_public() with key: {0}'.format(kname) + t.normal
 
 	def run(self):
 		''' Thread Run '''
@@ -99,12 +70,12 @@ class S3Thread(Thread):
 #
 def getKeys(bucket):
 	''' This returns a list of keys from a bucket '''
-
+	conn = None
 	try:
 		t = Terminal()
 		keys = list()
 		
-		print '[+] Getting keys for bucket {0}'.format(bucket)
+		print '[+] Getting keys for bucket {0}. This may take some time...'.format(bucket)
 		
 		conn = S3Connection()
 		bucket = conn.get_bucket(bucket)
@@ -124,8 +95,8 @@ def getKeys(bucket):
 		sys.exit(t.red + '[!] Unknown error in getKeys()' + t.normal)
 
 	finally:
-		conn.close()
-
+		if conn:
+			conn.close()
 
 def initArgs():
 	''' Initialize Argparse '''
@@ -137,12 +108,51 @@ def initArgs():
 
 	return parser.parse_args()
 
+def stats(totalKeys, results, bucket):
+	''' Print stats regarding exposed files '''
+	
+	fd = None
+	try:
+		t = Terminal()
+		fd = open('{0}.stats'.format(bucket), 'w')
+		
+		print 'Total Keys in Bucket: {0}'.format(str(totalKeys))
+		print 'Keys public to the interwebs: {0}'.format(str(len(results)))
+
+		fd.write('Total Keys in Bucket: {0}\n'.format(str(totalKeys)))
+		fd.write('Keys public to the interwebs: {0}\n'.format(str(len(results))))
+		
+		filetypes = list()
+
+		for result in results:
+			path = urlparse.urlparse(result.strip()).path
+			ext = os.path.splitext(path)[1]
+
+			if ext == '':
+				filetypes.append('other')
+			else:
+				filetypes.append(ext)
+
+		ct = Counter(filetypes).most_common()
+
+		print 'File types found: '
+		fd.write('File types found: \n')
+
+		for i in ct:
+			print '\t{0} - {1}'.format(i[0], i[1])
+			fd.write('\t{0} - {1}\n'.format(i[0], i[1]))
+	except:
+		print t.red + '[!] Error saving stats to file.' + t.normal
+	finally:
+		if fd:
+			fd.close()
 #
 #	Main
 #
 def main():
 	''' Main '''
 
+	print '[+] Starting task on {0}'.format(strftime("%m-%d-%Y %I:%M%p", gmtime()))
 	# Parse args
 	args = initArgs()	
 
@@ -157,13 +167,15 @@ def main():
 	# Get list of keys from bucket
 	keys = getKeys(args.bucket)
 
-	# Put keys into Queue and get length
+	print '[+] Retrieved keys. Starting permission enumeration...'
+	
+	# Put keys into Queue 
 	for key in keys:
 		keyQueue.put(key)
 	
 	# Remove this... for DEBUG 30 keys
 	'''
-	for i in xrange(30):
+	for i in xrange(200):
 		keyQueue.put(keys[i])
 	'''
 
@@ -176,15 +188,22 @@ def main():
 	# Wait for threads to finish
 	keyQueue.join()
 
-	# Start Write Thread
-	worker = WriteThread(resultsQueue, args.outfile)
-	worker.setDaemon(True)
-	worker.start()
+	print '[+] Enumeration complete.\n'
 
-	# Wait for threads to finish
-	resultsQueue.join()
+	results = list()
 
-	print '[+] {0} keys found.'.format(str(len(keys)))
+	# Store results into a list
+	while not resultsQueue.empty():
+		results.append(resultsQueue.get())
+
+	# Write results to file	
+	with open(args.outfile, 'a') as fd:
+		for result in results:
+			fd.write('{0}\n'.format(result))
+
+	# Get stats
+	print '### Statistics ###'
+	stats(len(keys), results, args.bucket)
 
 
 if __name__ == '__main__':
