@@ -36,6 +36,7 @@ class S3Thread(Thread):
 
 	def __init__(self, keyQueue, resultsQueue):
 		''' Constructor '''
+
 		Thread.__init__(self)
 		self.keys = keyQueue
 		self.results = resultsQueue
