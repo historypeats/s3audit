@@ -11,6 +11,7 @@ git clone https://github.com/historypeats/s3audit.git
 ```bash
 pip install -r requirements.txt
 ```
+Note: You may need to use sudo if you are not using virtualenv.
 3. Finally, invoke the s3audit script.
 ```bash
 ./s3audit -h
