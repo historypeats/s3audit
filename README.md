@@ -16,6 +16,14 @@ Note: You may need to use sudo if you are not using virtualenv.
 ```bash
 ./s3audit -h
 ```
+## Credentials
+This tool uses the boto framework, so you must either have your AWS secret key in your ~/.aws folder or you can add them directly in the script's source code:
+
+```python
+# AWS creds. If these values are not changed, boto will check your .aws/.boto configs for creds
+AWS_ACCESS_KEY_ID = None
+AWS_SECRET_ACCESS_KEY = None
+```
 
 ##Usage
 ```bash
